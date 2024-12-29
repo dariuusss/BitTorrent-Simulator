@@ -55,7 +55,7 @@
 				}
 			],
 			"type" : "INTERNAL",
-			"value" : "d:/Facultate/Anul 3/Semestrul 1/APD/teme/tema-2/cmake-build-debug"
+			"value" : "d:/Facultate/Anul 3/Semestrul 1/APD/teme/tema-2/tema-2-apd/cmake-build-debug"
 		},
 		{
 			"name" : "CMAKE_CACHE_MAJOR_VERSION",
@@ -575,7 +575,7 @@
 				}
 			],
 			"type" : "STATIC",
-			"value" : "D:/Facultate/Anul 3/Semestrul 1/APD/teme/tema-2/cmake-build-debug/CMakeFiles/pkgRedirects"
+			"value" : "D:/Facultate/Anul 3/Semestrul 1/APD/teme/tema-2/tema-2-apd/cmake-build-debug/CMakeFiles/pkgRedirects"
 		},
 		{
 			"name" : "CMAKE_GENERATOR",
@@ -647,7 +647,7 @@
 				}
 			],
 			"type" : "INTERNAL",
-			"value" : "D:/Facultate/Anul 3/Semestrul 1/APD/teme/tema-2"
+			"value" : "D:/Facultate/Anul 3/Semestrul 1/APD/teme/tema-2/tema-2-apd"
 		},
 		{
 			"name" : "CMAKE_INSTALL_PREFIX",
@@ -1291,7 +1291,7 @@
 				}
 			],
 			"type" : "STATIC",
-			"value" : "D:/Facultate/Anul 3/Semestrul 1/APD/teme/tema-2/cmake-build-debug"
+			"value" : "D:/Facultate/Anul 3/Semestrul 1/APD/teme/tema-2/tema-2-apd/cmake-build-debug"
 		},
 		{
 			"name" : "tema_2_IS_TOP_LEVEL",
@@ -1315,7 +1315,7 @@
 				}
 			],
 			"type" : "STATIC",
-			"value" : "D:/Facultate/Anul 3/Semestrul 1/APD/teme/tema-2"
+			"value" : "D:/Facultate/Anul 3/Semestrul 1/APD/teme/tema-2/tema-2-apd"
 		}
 	],
 	"kind" : "cache",

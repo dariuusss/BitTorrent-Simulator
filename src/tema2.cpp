@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <queue>
 
 using namespace std;
 
@@ -28,7 +29,7 @@ void *upload_thread_func(void *arg)
     return NULL;
 }
 
-struct tracker_files {
+struct tracker_file { // fisierul cum il vede trackerul
 
     char filename[16];
     int peers_list[11];
@@ -37,22 +38,23 @@ struct tracker_files {
     int nr_hashes; 
 };
 
-struct wanted_file {
+struct client_file { // fisier cum il are clientul; devine owned cand clientul are toate hashurile
 
     char filename[16];
-    int peers_list[11];
-    int nr_peers;
     int nr_owned_hashes;
     int nr_total_hashes;
+    char my_hashes_list[101][33];
 };
 
-vector <struct wanted_file> wanted_files; // fisierele dorite de clientul curent
+unordered_map <string, struct client_file>  my_files; // fisier detinut complet sau partial de clientul curent
+queue <string> wanted_files; // ce fisiere vrea; sterg de aici cand ii are toate hashurile
+
 
 void tracker(int numtasks, int rank,MPI_Datatype &mpi_tracker_files) {
 
     int nr_complete_procs = 0;
-    unordered_map <string,struct tracker_files> files_data;
-    vector <struct tracker_files> recv_seed_data(numtasks);
+    unordered_map <string,struct tracker_file> files_data;
+    vector <struct tracker_file> recv_seed_data(numtasks);
     MPI_Request seed_requests[numtasks];
     MPI_Status status;
 
@@ -76,7 +78,7 @@ void tracker(int numtasks, int rank,MPI_Datatype &mpi_tracker_files) {
         MPI_Testany(numtasks, seed_requests, &src, &received_some_data, &status);
         if(received_some_data) {
 
-            struct tracker_files t;
+            struct tracker_file t;
             t = recv_seed_data[src];
 
             if(strncmp(t.filename,"JOB_DONE_HERE",13)) {
@@ -96,6 +98,8 @@ void tracker(int numtasks, int rank,MPI_Datatype &mpi_tracker_files) {
         }
     }
 
+    // PANA AICI AI FACUT INITIALIZAREA
+
    
 }
 
@@ -113,20 +117,26 @@ void read_file(int rank, MPI_Datatype &mpi_tracker_files ) {
     for(int i = 0; i < nr_files; i++) {
         fin >> fisier_detinut;
         fin >> nr_hashuri;
-        struct tracker_files tf_to_send;
+        struct tracker_file tf_to_send;
+        struct client_file cf;
         strcpy(tf_to_send.filename,fisier_detinut);
+        strcpy(cf.filename,fisier_detinut);
         tf_to_send.nr_hashes = nr_hashuri;
+        cf.nr_owned_hashes = cf.nr_total_hashes = nr_hashuri;
         tf_to_send.nr_peers = 1;
         tf_to_send.peers_list[0] = rank;
         for(int j = 0; j < nr_hashuri; j++) {
             fin >> hash_curent;
             strcpy(tf_to_send.hashes_list[j],hash_curent);
+            strcpy(cf.my_hashes_list[j],hash_curent);
         }
 
         MPI_Send(&tf_to_send, 1, mpi_tracker_files, 0, 0, MPI_COMM_WORLD);
+        my_files[cf.filename] = cf;
+
     }
 
-    struct tracker_files final_msg;
+    struct tracker_file final_msg;
     strcpy(final_msg.filename,"JOB_DONE_HERE");
     MPI_Send(&final_msg, 1, mpi_tracker_files, 0, 0, MPI_COMM_WORLD);
 
@@ -135,10 +145,12 @@ void read_file(int rank, MPI_Datatype &mpi_tracker_files ) {
     char fisier_dorit[16];
     for(int k = 0; k < nr_fisiere_dorite; k++) {
         fin >> fisier_dorit;
-        struct wanted_file wf1;
-        strcpy(wf1.filename,fisier_dorit);
-        wf1.nr_owned_hashes = 0;
-        wanted_files.push_back(wf1);
+        wanted_files.push(fisier_dorit);
+        struct client_file cf;
+        strcpy(cf.filename,fisier_dorit);
+        cf.nr_owned_hashes = 0;
+        //INITIAL CAND VREAU UN FISIER PANA SA FAC REQUEST STIU DOAR CUM SE NUMESTE
+        // SI CA NU AM NICIUN HASH DIN EL
     }
 
     fin.close();
@@ -159,8 +171,10 @@ void peer(int numtasks, int rank, MPI_Datatype &mpi_tracker_files) {
     cout << "Procesul " << rank << " a primit acceptul si poate incepe sa descarce" << endl;
 
     cout << "De asemenea, procesul " << rank << " doreste " << wanted_files.size() << " fisiere, mai exact:\n";
-    for(auto x : wanted_files)
-        cout << "--->" << x.filename << "<---\n";
+    while(!wanted_files.empty()) {
+        cout << "$$$" << wanted_files.front() << "$$$\n";
+        wanted_files.pop();
+    }
 
 
     r = pthread_create(&download_thread, NULL, download_thread_func, (void *) &rank);
@@ -187,7 +201,7 @@ void peer(int numtasks, int rank, MPI_Datatype &mpi_tracker_files) {
         exit(-1);
     }
 
-    
+    //AICI AI FACUT INITIALIZAREA, DE ACUM LUCREZI PE THREADURILE DE DOWNLOAD SI UPLOAD
 
 }
 
@@ -206,11 +220,11 @@ void define_mpi_tracker_files(MPI_Datatype &mpi_tracker_files, MPI_Datatype &mpi
     MPI_Aint offsets[5];
     MPI_Datatype datatypes[5] = {MPI_CHAR, MPI_INT, MPI_INT, mpi_char_matrix, MPI_INT};
 
-    offsets[0] = offsetof(struct tracker_files, filename);
-    offsets[1] = offsetof(struct tracker_files, peers_list);
-    offsets[2] = offsetof(struct tracker_files,nr_peers);
-    offsets[3] = offsetof(struct tracker_files, hashes_list);
-    offsets[4] = offsetof(struct tracker_files, nr_hashes);
+    offsets[0] = offsetof(struct tracker_file, filename);
+    offsets[1] = offsetof(struct tracker_file, peers_list);
+    offsets[2] = offsetof(struct tracker_file,nr_peers);
+    offsets[3] = offsetof(struct tracker_file, hashes_list);
+    offsets[4] = offsetof(struct tracker_file, nr_hashes);
 
     MPI_Type_create_struct(5, field_sizes, offsets, datatypes, &mpi_tracker_files);
     MPI_Type_commit(&mpi_tracker_files);
