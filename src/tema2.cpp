@@ -151,6 +151,7 @@ void read_file(int rank, MPI_Datatype &mpi_tracker_files ) {
         cf.nr_owned_hashes = 0;
         //INITIAL CAND VREAU UN FISIER PANA SA FAC REQUEST STIU DOAR CUM SE NUMESTE
         // SI CA NU AM NICIUN HASH DIN EL
+        my_files[fisier_dorit] = cf;
     }
 
     fin.close();
@@ -168,13 +169,20 @@ void peer(int numtasks, int rank, MPI_Datatype &mpi_tracker_files) {
     MPI_Recv(&start_download_ack,30,MPI_CHAR,0,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
     if(strcmp(start_download_ack,"ACK_YOU_CAN_START_DOWNLOADING"))
         exit(-1);
+    cout << "!-----------------------------------------------------------------------------!\n";
     cout << "Procesul " << rank << " a primit acceptul si poate incepe sa descarce" << endl;
 
     cout << "De asemenea, procesul " << rank << " doreste " << wanted_files.size() << " fisiere, mai exact:\n";
     while(!wanted_files.empty()) {
-        cout << "$$$" << wanted_files.front() << "$$$\n";
+        cout << "<" << wanted_files.front() << ">\n";
         wanted_files.pop();
     }
+
+    for(auto x : my_files) {
+        cout << "--> Pentru fisierul " << x.second.filename << " procesul " << rank << " detine " << x.second.nr_owned_hashes << "/" << x.second.nr_total_hashes << " hashuri <--\n";
+    }
+
+
 
 
     r = pthread_create(&download_thread, NULL, download_thread_func, (void *) &rank);
