@@ -74,21 +74,16 @@ void *download_thread_func(void *arg)
         req.code = SWARM_REQUEST_CODE;
         strcpy(req.filename, current_file.c_str());
         req.hash_index = -1; // nu imi pasa de hash cand cer swarm-ul
-        cout << "Clientul " << rank << " a cerut " << current_file << endl;
         MPI_Send(&req, 1, mpi_client_request, 0, 30, MPI_COMM_WORLD);
         struct file_swarm swarm_list;
         MPI_Status status;
         MPI_Recv(&swarm_list, 1, mpi_file_swarm, 0, 30, MPI_COMM_WORLD, &status);
-        my_files[current_file].nr_total_hashes = swarm_list.nr_peers;
-
-        cout << "Clientul " << rank << " a obtinut " << current_file << endl;
         wanted_files.pop();
     }
 
     struct client_request finished_download;
     finished_download.code = CLIENT_DOWNLOADED_ALL_FILES;
     MPI_Send(&finished_download, 1, mpi_client_request, 0, 30, MPI_COMM_WORLD);
-    cout << "Clientul " << rank << " a descarcat tot\n";
     return NULL;
 }
 
@@ -151,6 +146,7 @@ void tracker(int numtasks, int rank) {
     nr_complete_procs = 0;
     while(1) {
 
+
         if(nr_complete_procs == numtasks - 1) {
             struct client_request close_upload;
             close_upload.code = CLOSE_UPLOAD_THREAD;
@@ -162,18 +158,19 @@ void tracker(int numtasks, int rank) {
         MPI_Status status;
 
         struct client_request client_req;
-        struct file_swarm response;
         MPI_Recv(&client_req, 1, mpi_client_request, MPI_ANY_SOURCE, 30, MPI_COMM_WORLD, &status);
+        int src = status.MPI_SOURCE;
         if(client_req.code == CLIENT_DOWNLOADED_ALL_FILES)
             nr_complete_procs++;
         else if(client_req.code == SWARM_REQUEST_CODE) {
 
             string wanted_file = client_req.filename;
-            response.nr_peers = files_data[wanted_file].nr_peers;
+            struct file_swarm response;
             response.nr_file_hashes = files_data[wanted_file].nr_hashes;
-            for(int i = 0; i < response.nr_file_hashes; i++)
+            response.nr_peers = files_data[wanted_file].nr_peers;
+            for(int i = 0; i < response.nr_peers; i++)
                 response.peers_list[i] = files_data[wanted_file].peers_list[i];
-            MPI_Send(&response, 1, mpi_file_swarm, status.MPI_SOURCE, 30, MPI_COMM_WORLD);
+            MPI_Send(&response, 1, mpi_file_swarm, src, 30, MPI_COMM_WORLD);
         }
 
 
