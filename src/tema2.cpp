@@ -16,6 +16,9 @@ using namespace std;
 #define MAX_CHUNKS 100
 #define SWARM_REQUEST_CODE 71 
 #define SEGMENT_REQUEST_CODE 72
+#define CLIENT_DOWNLOADED_ALL_FILES 73
+#define CLIENTS_CAN_START 74
+#define CLOSE_UPLOAD_THREAD 75 
 
 MPI_Datatype mpi_char_matrix, mpi_char_line, mpi_tracker_files, mpi_file_swarm, mpi_client_request;
 
@@ -59,24 +62,47 @@ void *download_thread_func(void *arg)
 
     int rank = *(int*) arg;
     
-    string current_file;
+    string current_file; 
+
+    //pe moment consider ca sunt gata doar daca am obtinut bine nr de hashes pentru fiecare fisier, sa vad ca merge
 
     while(!wanted_files.empty()) {
 
-        
         current_file = wanted_files.front();
-        wanted_files.pop();
 
+        struct client_request req;
+        req.code = SWARM_REQUEST_CODE;
+        strcpy(req.filename, current_file.c_str());
+        req.hash_index = -1; // nu imi pasa de hash cand cer swarm-ul
+        cout << "Clientul " << rank << " a cerut " << current_file << endl;
+        MPI_Send(&req, 1, mpi_client_request, 0, 30, MPI_COMM_WORLD);
+        struct file_swarm swarm_list;
+        MPI_Status status;
+        MPI_Recv(&swarm_list, 1, mpi_file_swarm, 0, 30, MPI_COMM_WORLD, &status);
+        my_files[current_file].nr_total_hashes = swarm_list.nr_peers;
+
+        cout << "Clientul " << rank << " a obtinut " << current_file << endl;
+        wanted_files.pop();
     }
 
-
+    struct client_request finished_download;
+    finished_download.code = CLIENT_DOWNLOADED_ALL_FILES;
+    MPI_Send(&finished_download, 1, mpi_client_request, 0, 30, MPI_COMM_WORLD);
+    cout << "Clientul " << rank << " a descarcat tot\n";
     return NULL;
 }
 
 void *upload_thread_func(void *arg)
 {
-
+    
     int rank = *(int*) arg;
+    MPI_Status status;
+    while(1) {
+        struct client_request req;
+        MPI_Recv(&req, 1, mpi_client_request, MPI_ANY_SOURCE, 40, MPI_COMM_WORLD, &status);
+        if(status.MPI_SOURCE == TRACKER_RANK)
+            break;
+    }
     return NULL;
 }
 
@@ -86,7 +112,7 @@ void tracker(int numtasks, int rank) {
     unordered_map <string,struct tracker_file> files_data;
     MPI_Status status;
 
-    int src,received_some_data;
+    int src;
 
 
     while(1) {
@@ -94,43 +120,66 @@ void tracker(int numtasks, int rank) {
         if(nr_complete_procs == numtasks - 1) { // am primit de la toti clientii
             char start_ack[30] = "ACK_YOU_CAN_START_DOWNLOADING";
             for(int i = 1; i < numtasks; i++) 
-                MPI_Send(&start_ack, 30, MPI_CHAR, i, 0, MPI_COMM_WORLD);
+                MPI_Send(&start_ack, 30, MPI_CHAR, i, 20, MPI_COMM_WORLD);
             cout << "Trackerul a trimis tot" << endl;
             break;
         }
 
         
-        received_some_data = 0;
+        struct tracker_file t;
+        MPI_Recv(&t, 1, mpi_tracker_files, MPI_ANY_SOURCE, 10, MPI_COMM_WORLD, &status);
+        src = status.MPI_SOURCE;
+    
+        if(strncmp(t.filename,"JOB_DONE_HERE",13)) {
 
-        MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &received_some_data, &status);
-
-        if(received_some_data) {
-
-            struct tracker_file t;
-            MPI_Recv(&t,1,mpi_tracker_files,MPI_ANY_SOURCE,MPI_ANY_TAG,MPI_COMM_WORLD,&status);
-            src = status.MPI_SOURCE;
-        
-            if(strncmp(t.filename,"JOB_DONE_HERE",13)) {
-
-                if(files_data.find(t.filename) == files_data.end()) // primul seed
-                    files_data[t.filename] = t;
-                else { // alt seed
-                    int k = files_data[t.filename].nr_peers;
-                    files_data[t.filename].peers_list[k] = src;
-                    files_data[t.filename].nr_peers++;
-                }
-            
-            } else {
-                nr_complete_procs++;
+            if(files_data.find(t.filename) == files_data.end()) // primul seed
+                files_data[t.filename] = t;
+            else { // alt seed
+                int k = files_data[t.filename].nr_peers;
+                files_data[t.filename].peers_list[k] = src;
+                files_data[t.filename].nr_peers++;
             }
-
-
+        
+        } else {
+            nr_complete_procs++;
         }
-
         
     }
 
     // PANA AICI AI FACUT INITIALIZAREA, DE AICI PRIMESTI CERERI DE SWARMURI
+
+    nr_complete_procs = 0;
+    while(1) {
+
+        if(nr_complete_procs == numtasks - 1) {
+            struct client_request close_upload;
+            close_upload.code = CLOSE_UPLOAD_THREAD;
+            for(int i = 1; i < numtasks; i++)
+                MPI_Send(&close_upload, 1, mpi_client_request, i , 40, MPI_COMM_WORLD);
+            break;
+        }
+
+        MPI_Status status;
+
+        struct client_request client_req;
+        struct file_swarm response;
+        MPI_Recv(&client_req, 1, mpi_client_request, MPI_ANY_SOURCE, 30, MPI_COMM_WORLD, &status);
+        if(client_req.code == CLIENT_DOWNLOADED_ALL_FILES)
+            nr_complete_procs++;
+        else if(client_req.code == SWARM_REQUEST_CODE) {
+
+            string wanted_file = client_req.filename;
+            response.nr_peers = files_data[wanted_file].nr_peers;
+            response.nr_file_hashes = files_data[wanted_file].nr_hashes;
+            for(int i = 0; i < response.nr_file_hashes; i++)
+                response.peers_list[i] = files_data[wanted_file].peers_list[i];
+            MPI_Send(&response, 1, mpi_file_swarm, status.MPI_SOURCE, 30, MPI_COMM_WORLD);
+        }
+
+
+    }
+
+    cout << "Trackerul si-a terminat executia\n";
 
 }
 
@@ -165,14 +214,14 @@ void read_file(int rank) {
             strcpy(cf.my_hashes_list[j],hash_curent);
         }
 
-        MPI_Send(&tf_to_send, 1, mpi_tracker_files, 0, 0, MPI_COMM_WORLD);
+        MPI_Send(&tf_to_send, 1, mpi_tracker_files, 0, 10, MPI_COMM_WORLD);
         my_files[cf.filename] = cf;
 
     }
 
     struct tracker_file final_msg;
     strcpy(final_msg.filename,"JOB_DONE_HERE");
-    MPI_Send(&final_msg, 1, mpi_tracker_files, 0, 0, MPI_COMM_WORLD);
+    MPI_Send(&final_msg, 1, mpi_tracker_files, 0, 10, MPI_COMM_WORLD);
 
     // fisierele pe care le doreste
     fin >> nr_fisiere_dorite;
@@ -200,7 +249,7 @@ void peer(int numtasks, int rank) {
 
     read_file(rank);
     char start_download_ack[35] = "";
-    MPI_Recv(&start_download_ack,30,MPI_CHAR,0,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
+    MPI_Recv(&start_download_ack, 30, MPI_CHAR, 0, 20, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
     if(strcmp(start_download_ack,"ACK_YOU_CAN_START_DOWNLOADING"))
         exit(-1);
 
