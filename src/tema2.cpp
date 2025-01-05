@@ -1,7 +1,9 @@
 #include <mpi.h>
 #include <pthread.h>
 #include <fstream>
+#include <iostream>
 #include <cstdlib>
+#include <ctime>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -14,11 +16,13 @@ using namespace std;
 #define MAX_FILENAME 15
 #define HASH_SIZE 32
 #define MAX_CHUNKS 100
-#define SWARM_REQUEST_CODE 71 
 #define SEGMENT_REQUEST_CODE 72
-#define CLIENT_DOWNLOADED_ALL_FILES 73
-#define CLIENTS_CAN_START 74
-#define CLOSE_UPLOAD_THREAD 75 
+#define CLOSE_UPLOAD_THREAD 73
+#define DOES_NOT_HAVE_SEGMENT 74
+#define HAS_SEGMENT 75
+#define CLIENT_DOWNLOADED_ALL_FILES -1
+#define CLIENT_DOWNLOADED_ONE_FILE -2
+#define SWARM_REQUEST -7000
 
 MPI_Datatype mpi_char_matrix, mpi_char_line, mpi_tracker_files, mpi_file_swarm, mpi_client_request;
 
@@ -42,16 +46,17 @@ struct client_file { // fisier cum il are clientul; devine owned cand clientul a
 };
 
 struct file_swarm {
-    int nr_peers;
+    int nr_peers; //daca nu e cerere de swarm, prin acest numar voi codifica alte lucruri; cand trimit raspunsul 
+    // pun in acest camp numarul de peers, codul e doar pana sa primesc raspuns
     int peers_list[11];
-    int nr_hashes;
+    int nr_hashes; // nr de hashuri ale fisierului
     char filename[16];
 };
 
 struct client_request {
     int code;
-    char filename[16];
-    int hash_index; 
+    char filename[16]; 
+    int hash_index; //al catelea segment il vreau
     char hash[33];
 };
 
@@ -62,6 +67,8 @@ queue <string> wanted_files; // ce fisiere vrea; sterg de aici cand ii are toate
 void *download_thread_func(void *arg)
 {
 
+    //srand(time(0));
+
     int rank = *(int*) arg;
 
     struct file_swarm swarm;
@@ -69,25 +76,40 @@ void *download_thread_func(void *arg)
     while(!wanted_files.empty()) {
 
         string current_file = wanted_files.front();
-        swarm.nr_peers = 7000; // asa marchez cerere normala de swarm
+
+        swarm.nr_peers = SWARM_REQUEST; // asa marchez cerere normala de swarm
         strcpy(swarm.filename, current_file.c_str());
         MPI_Ssend(&swarm, 1, mpi_file_swarm, 0, 3, MPI_COMM_WORLD); //cer swarm
-        MPI_Recv(&swarm, 1, mpi_file_swarm, 0, 3, MPI_COMM_WORLD, MPI_STATUS_IGNORE); // primesc swarm
+        MPI_Recv(&swarm, 1, mpi_file_swarm, 0, 7, MPI_COMM_WORLD, MPI_STATUS_IGNORE); // primesc swarm
 
-        my_files[current_file].nr_total_hashes = swarm.nr_hashes;
+        my_files[current_file].nr_total_hashes = swarm.nr_hashes; // stiu cate hashuri imi trebuie, incep descarcarea acum
 
         for(int i = 0; i < swarm.nr_hashes; i++) { // pt fiecare hash
 
-            for(int j = 0; j < swarm.nr_peers; j++) {//tuturor celor care il au
+            
+            if(i % 10 == 0) { // cerere de actualizare la fiecare 10 segmente; 
+                swarm.nr_peers = SWARM_REQUEST;
+                strcpy(swarm.filename, current_file.c_str());
+                MPI_Ssend(&swarm, 1, mpi_file_swarm, 0, 3, MPI_COMM_WORLD); //cer swarm
+                MPI_Recv(&swarm, 1, mpi_file_swarm, 0, 7, MPI_COMM_WORLD, MPI_STATUS_IGNORE); // primesc swarm
+            }
+            
+            
+            for(int j = 0; j < swarm.nr_peers; j++) { //tuturor celor care il au
 
                 int dst = swarm.peers_list[j];
 
                 client_req.hash_index = i;
                 strcpy(client_req.filename,current_file.c_str());
                 MPI_Ssend(&client_req, 1, mpi_client_request, dst, 4, MPI_COMM_WORLD);
-                //cout << "Clientul " << rank << " a facut cerere lui " << dst << " pentru hashul " << client_req.hash_index << " al lui " << client_req.filename << endl;
                 MPI_Recv(&client_req, 1, mpi_client_request, dst, 6, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                strcpy(my_files[current_file].my_hashes_list[client_req.hash_index],client_req.hash);
+
+                if(client_req.code == HAS_SEGMENT) {
+                    strcpy(my_files[current_file].my_hashes_list[client_req.hash_index],client_req.hash);
+                    my_files[current_file].nr_owned_hashes++;
+                    break; // nu mai trimit cereri de segment
+                }
+
             }
 
         }
@@ -99,11 +121,15 @@ void *download_thread_func(void *arg)
         for(int i = 1; i < my_files[current_file].nr_total_hashes; i++)
             out << '\n' << my_files[current_file].my_hashes_list[i];
         out.close();
+
+        swarm.nr_peers = CLIENT_DOWNLOADED_ONE_FILE;
+        strcpy(swarm.filename,current_file.c_str());
+        MPI_Ssend(&swarm, 1, mpi_file_swarm, 0, 3, MPI_COMM_WORLD); // ii spun trackerului ca am descarcat fisierul
         wanted_files.pop();
     }
 
     swarm.nr_peers = -1;
-    MPI_Ssend(&swarm, 1, mpi_file_swarm, 0, 3, MPI_COMM_WORLD); //anunta trackerul ca a terminat de descarcat
+    MPI_Ssend(&swarm, 1, mpi_file_swarm, 0, 3, MPI_COMM_WORLD); //anunta trackerul ca a terminat de descarcat tot, dupa care se inchide threadul
     return NULL;
 }
 
@@ -115,11 +141,20 @@ void *upload_thread_func(void *arg)
     MPI_Status status;
     while(1) {
         MPI_Recv(&req, 1, mpi_client_request, MPI_ANY_SOURCE, 4, MPI_COMM_WORLD, &status); // primesc cerere de segment sau inchidere upload
+
         if(status.MPI_SOURCE == TRACKER_RANK)
             break;
 
         string name = req.filename;
-        strcpy(req.hash,my_files[name].my_hashes_list[req.hash_index]);
+
+
+        if(req.hash_index <= my_files[name].nr_owned_hashes) {
+            req.code = HAS_SEGMENT;
+            strcpy(req.hash,my_files[name].my_hashes_list[req.hash_index]);
+        } else {
+            req.code = DOES_NOT_HAVE_SEGMENT;
+        }
+
         MPI_Ssend(&req, 1, mpi_client_request, status.MPI_SOURCE, 6, MPI_COMM_WORLD);
 
     }
@@ -130,6 +165,7 @@ void tracker(int numtasks, int rank) {
 
     int nr_complete_procs = 0;
     unordered_map <string,struct tracker_file> files_data;
+    unordered_map <string , vector <int> > seeds;
     MPI_Status status;
 
     int src;
@@ -139,7 +175,7 @@ void tracker(int numtasks, int rank) {
 
     while(1) {
 
-        if(nr_complete_procs == numtasks - 1) { // am primit de la toti clientii
+        if(nr_complete_procs == numtasks - 1) { // am primit de la toti clientii fisierele pentru care sunt seeds
             char start_ack[30] = "ACK_YOU_CAN_START_DOWNLOADING";
             for(int i = 1; i < numtasks; i++) 
                 MPI_Ssend(&start_ack, 30, MPI_CHAR, i, 1, MPI_COMM_WORLD);
@@ -169,12 +205,14 @@ void tracker(int numtasks, int rank) {
         
     }
 
+    //----------------------------------------------------------------------------------------------
+
     nr_complete_procs = 0;
     struct file_swarm swarm;
     while(1) {
 
-        if(nr_complete_procs == numtasks - 1) {
-            //toti au terminat de descarcat, deci ai de inchis uploadul
+        if(nr_complete_procs == numtasks - 1) { // toti clientii au terminat de descarcat ce si-au dorit
+            
             struct client_request client_req;
             client_req.code = CLOSE_UPLOAD_THREAD;
             for(int i = 1; i < numtasks; i++)
@@ -183,15 +221,42 @@ void tracker(int numtasks, int rank) {
         }
 
         MPI_Recv(&swarm, 1, mpi_file_swarm, MPI_ANY_SOURCE, 3, MPI_COMM_WORLD, &status);
-        if(swarm.nr_peers == -1)
+        if(swarm.nr_peers == CLIENT_DOWNLOADED_ALL_FILES) { //un client a terminat descarcarea tuturor fisierelor
             nr_complete_procs++;
-        else if(swarm.nr_peers == 7000) { // swarm request normal
+
+        } else if(swarm.nr_peers == CLIENT_DOWNLOADED_ONE_FILE) { // un client a descarcat un fisier
+
+            string FILENAME = swarm.filename;
+            seeds[FILENAME].push_back(status.MPI_SOURCE);
+            cout << FILENAME << " a fost descarcat de clientul " << status.MPI_SOURCE << endl; 
+
+        } else if(swarm.nr_peers == SWARM_REQUEST) { // cerere normala de swarm / actualizare
             string file_name = swarm.filename;
             swarm.nr_peers = files_data[file_name].nr_peers;
             swarm.nr_hashes = files_data[file_name].nr_hashes;
             for(int i = 0; i < swarm.nr_peers; i++)
                 swarm.peers_list[i] = files_data[file_name].peers_list[i];
-            MPI_Ssend(&swarm, 1, mpi_file_swarm, status.MPI_SOURCE, 3, MPI_COMM_WORLD);            
+            MPI_Ssend(&swarm, 1, mpi_file_swarm, status.MPI_SOURCE, 7, MPI_COMM_WORLD);  
+
+            //verific dupa daca e in swarm cel ce a facut cererea si daca nu e, il adaug
+
+            //
+            int src = status.MPI_SOURCE;
+            int flag = 0;
+            for(int i = 0; i < files_data[file_name].nr_peers; i++)
+                if(files_data[file_name].peers_list[i] == src) { // daca e deja in swarm marchez asta
+                    flag = 1;
+                    break;
+                }
+
+            if(flag == 0) { //nu e deja in swarm
+                int nr_peers = files_data[file_name].nr_peers;
+                files_data[file_name].peers_list[nr_peers] = src;
+                files_data[file_name].nr_peers++;
+            }
+            //
+
+
         }
     }
 
@@ -222,9 +287,6 @@ void read_file(int rank) {
         struct tracker_file tf_to_send;
         struct client_file cf;
 
-        for(int k = 0; k < 101; k++)
-            strcpy(cf.my_hashes_list[k],"kaputt");
-
         strcpy(tf_to_send.filename,fisier_detinut);
         strcpy(cf.filename,fisier_detinut);
         tf_to_send.nr_hashes = nr_hashuri;
@@ -252,14 +314,18 @@ void read_file(int rank) {
     for(int k = 0; k < nr_fisiere_dorite; k++) {
         fin >> fisier_dorit;
         wanted_files.push(fisier_dorit);
-        struct client_file cf;
-        strcpy(cf.filename,fisier_dorit);
-        cf.nr_owned_hashes = 0;
+        struct client_file cf2;
+        strcpy(cf2.filename,fisier_dorit);
+        cf2.nr_owned_hashes = 0;
+
+        /*
         for(int i = 0; i < 101; i++)
-            strcpy(cf.my_hashes_list[i],"kaputt");
+            strcpy(cf2.my_hashes_list[i],"kaputt");
+         */
+
         //INITIAL CAND VREAU UN FISIER PANA SA FAC REQUEST STIU DOAR CUM SE NUMESTE
         // SI CA NU AM NICIUN HASH DIN EL
-        my_files[fisier_dorit] = cf;
+        my_files[fisier_dorit] = cf2;
     }
 
     fin.close();
