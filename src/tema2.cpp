@@ -81,7 +81,7 @@ void *download_thread_func(void *arg)
 
         my_files[current_file].nr_total_hashes = swarm.nr_hashes; // stiu cate hashuri imi trebuie, incep descarcarea acum
 
-        for(int i = 0; i < swarm.nr_hashes; i++) { // pt fiecare hash
+        for(int i = 0; i < swarm.nr_hashes; i++) { // pt fiecare segment
 
             
             if(i % 10 == 0 && i > 0) { // cerere de actualizare la fiecare 10 segmente descarcate cu succes
@@ -97,7 +97,7 @@ void *download_thread_func(void *arg)
             int dst;
             while(1) {
 
-                int dst = swarm.peers_list[dst_index]; 
+                dst = swarm.peers_list[dst_index]; 
                 client_req.hash_index = i;
                 strcpy(client_req.filename,current_file.c_str());
                 MPI_Ssend(&client_req, 1, mpi_client_request, dst, 4, MPI_COMM_WORLD);
@@ -116,7 +116,7 @@ void *download_thread_func(void *arg)
             
         }
 
-        swarm.nr_peers = CLIENT_DOWNLOADED_ONE_FILE; //daca ajung aici, inseamna ca am descarcat fisierul
+        swarm.nr_peers = CLIENT_DOWNLOADED_ONE_FILE; // daca ajung aici, inseamna ca am descarcat fisierul
         strcpy(swarm.filename,current_file.c_str());
         MPI_Ssend(&swarm, 1, mpi_file_swarm, 0, 3, MPI_COMM_WORLD); // ii spun trackerului ca am descarcat fisierul
         
@@ -149,7 +149,7 @@ void *upload_thread_func(void *arg)
     while(1) {
         MPI_Recv(&req, 1, mpi_client_request, MPI_ANY_SOURCE, 4, MPI_COMM_WORLD, &status); // primesc cerere de segment sau inchidere upload
 
-        if(status.MPI_SOURCE == TRACKER_RANK) // daca primesc mesaj de la tracker e cerere de inchidere thread, in rest e de cerere de sgement
+        if(status.MPI_SOURCE == TRACKER_RANK) // am primit mesaj de la tracker ca toti clientii au terminat de descarcat, deci inchid thread-ul de upload
             break;
 
         string name = req.filename;
@@ -180,7 +180,7 @@ void tracker(int numtasks, int rank) {
 
     string filename;
 
-
+    // acest while este pentru pasul de initializare
     while(1) {
 
         if(nr_complete_procs == numtasks - 1) { // am primit de la toti clientii fisierele pentru care sunt seeds(faza de initializare)
@@ -218,15 +218,17 @@ void tracker(int numtasks, int rank) {
 
     nr_complete_procs = 0;
     struct file_swarm swarm;
+
+    //acest while este pentru procesarea de cereri de la clienti
     while(1) {
 
         if(nr_complete_procs == numtasks - 1) { // ALL CLIENTS FINISHED DOWNLOADING
             
             struct client_request client_req;
             client_req.code = CLOSE_UPLOAD_THREAD;
-            for(int i = 1; i < numtasks; i++)
+            for(int i = 1; i < numtasks; i++) // le spun tuturor clientilor sa se opreasca 
                 MPI_Ssend(&client_req, 1, mpi_client_request, i, 4, MPI_COMM_WORLD);
-            break;
+            break; // se opreste si trackerul
         }
 
         MPI_Recv(&swarm, 1, mpi_file_swarm, MPI_ANY_SOURCE, 3, MPI_COMM_WORLD, &status);
