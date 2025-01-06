@@ -21,6 +21,7 @@ using namespace std;
 #define CLIENT_DOWNLOADED_ALL_FILES -1
 #define CLIENT_DOWNLOADED_ONE_FILE -2
 #define SWARM_REQUEST -7000
+#define UPDATE_REQUEST -7567
 
 MPI_Datatype mpi_char_matrix, mpi_char_line, mpi_tracker_files, mpi_file_swarm, mpi_client_request;
 
@@ -42,11 +43,12 @@ struct client_file { // fisier cum il are clientul
 };
 
 struct file_swarm {
-    int nr_peers; //daca nu e cerere de swarm / actualizare, prin acest numar voi codifica alte lucruri; cand trimit raspunsul 
+    int nr_peers; // prin acest numar voi codifica alte lucruri; cand trimit raspunsul 
     // pun in acest camp numarul de peers, codul e doar pana sa primesc raspuns
     int peers_list[11];
     int nr_hashes; // nr de hashuri ale fisierului
     char filename[16];
+    char hashes_list[101][33]; // hashurile primite de la tracker 
 };
 
 struct client_request {
@@ -79,16 +81,16 @@ void *download_thread_func(void *arg)
         MPI_Ssend(&swarm, 1, mpi_file_swarm, 0, 3, MPI_COMM_WORLD); //cer swarm
         MPI_Recv(&swarm, 1, mpi_file_swarm, 0, 7, MPI_COMM_WORLD, MPI_STATUS_IGNORE); // primesc swarm
 
-        my_files[current_file].nr_total_hashes = swarm.nr_hashes; // stiu cate hashuri imi trebuie, incep descarcarea acum
+        my_files[current_file].nr_total_hashes = swarm.nr_hashes; // stiu cate segmente imi trebuie, incep descarcarea acum
 
         for(int i = 0; i < swarm.nr_hashes; i++) { // pt fiecare segment
 
             
             if(i % 10 == 0 && i > 0) { // cerere de actualizare la fiecare 10 segmente descarcate cu succes
-                swarm.nr_peers = SWARM_REQUEST;
+                swarm.nr_peers = UPDATE_REQUEST;
                 strcpy(swarm.filename, current_file.c_str());
-                MPI_Ssend(&swarm, 1, mpi_file_swarm, 0, 3, MPI_COMM_WORLD); //cer swarm
-                MPI_Recv(&swarm, 1, mpi_file_swarm, 0, 7, MPI_COMM_WORLD, MPI_STATUS_IGNORE); // primesc swarm
+                MPI_Ssend(&swarm, 1, mpi_file_swarm, 0, 3, MPI_COMM_WORLD); //cer update
+                MPI_Recv(&swarm, 1, mpi_file_swarm, 0, 7, MPI_COMM_WORLD, MPI_STATUS_IGNORE); // primesc update
             }
 
             
@@ -99,6 +101,7 @@ void *download_thread_func(void *arg)
 
                 dst = swarm.peers_list[dst_index]; 
                 client_req.hash_index = i;
+                strcpy(client_req.hash, swarm.hashes_list[client_req.hash_index]);
                 strcpy(client_req.filename,current_file.c_str());
                 MPI_Ssend(&client_req, 1, mpi_client_request, dst, 4, MPI_COMM_WORLD);
                 MPI_Recv(&client_req, 1, mpi_client_request, dst, 6, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
@@ -154,12 +157,14 @@ void *upload_thread_func(void *arg)
 
         string name = req.filename;
 
+        char s1[33] = "", s2[33] = "";
+        strcpy(s1,req.hash);
+        strcpy(s2,my_files[name].my_hashes_list[req.hash_index]);
 
-        if(req.hash_index <= my_files[name].nr_owned_hashes - 1) { // daca detin x hashuri dintr-un anumit fisier,
-        //atunci pot da ACK pt cereri de segmente cu indici de la 0 la x - 1
+        if(req.hash_index <= my_files[name].nr_owned_hashes - 1 && strcmp(s1,s2) == 0 ) { // daca detin x hashuri dintr-un anumit fisier,
+        //atunci pot da ACK pt cereri de segmente cu indici de la 0 la x - 1 + verific sa fie vorba de acelasi hash, le compar
 
             req.code = HAS_SEGMENT;
-            strcpy(req.hash,my_files[name].my_hashes_list[req.hash_index]);
         } else {
             req.code = DOES_NOT_HAVE_SEGMENT;
         }
@@ -241,7 +246,7 @@ void tracker(int numtasks, int rank) {
             string FILENAME = swarm.filename;
             cout << FILENAME << " a fost descarcat de clientul " << status.MPI_SOURCE << endl; 
 
-        } else if(swarm.nr_peers == SWARM_REQUEST) { // cerere normala de swarm / actualizare
+        } else if(swarm.nr_peers == SWARM_REQUEST) { // cerere normala de swarm
 
             string file_name = swarm.filename;
             swarm.nr_peers = files_data[file_name].nr_peers; //cand trimit raspunsul nu mai am nevoie
@@ -250,6 +255,10 @@ void tracker(int numtasks, int rank) {
             swarm.nr_hashes = files_data[file_name].nr_hashes;
             for(int i = 0; i < swarm.nr_peers; i++)
                 swarm.peers_list[i] = files_data[file_name].peers_list[i];
+
+            for(int i = 0; i < swarm.nr_hashes; i++)
+                strcpy(swarm.hashes_list[i], files_data[file_name].hashes_list[i]);
+
             MPI_Ssend(&swarm, 1, mpi_file_swarm, status.MPI_SOURCE, 7, MPI_COMM_WORLD);  
 
             //verific dupa daca e in swarm cel ce a facut cererea si daca nu e, il adaug
@@ -269,7 +278,20 @@ void tracker(int numtasks, int rank) {
             }
             
 
+        } else if(swarm.nr_peers == UPDATE_REQUEST) { // la update nu retrimit si hashurile, nu ar avea sens
+
+            string file_name = swarm.filename;
+            swarm.nr_peers = files_data[file_name].nr_peers; //cand trimit raspunsul nu mai am nevoie
+            // de codul pt tipul cererii, pun numarul de peers pt fisierul pt care am primit request
+
+            for(int i = 0; i < swarm.nr_peers; i++)
+                swarm.peers_list[i] = files_data[file_name].peers_list[i];
+
+            MPI_Ssend(&swarm, 1, mpi_file_swarm, status.MPI_SOURCE, 7, MPI_COMM_WORLD); 
+
         }
+
+
     }
 
 }
@@ -415,15 +437,16 @@ void define_mpi_client_request() {
 
 
 void define_mpi_file_swarm() {
-    int field_sizes[4] = {1,11,1,16};
-    MPI_Aint offsets[4];
-    MPI_Datatype datatypes[4] = {MPI_INT, MPI_INT, MPI_INT, MPI_CHAR};
+    int field_sizes[5] = {1,11,1,16,1};
+    MPI_Aint offsets[5];
+    MPI_Datatype datatypes[5] = {MPI_INT, MPI_INT, MPI_INT, MPI_CHAR, mpi_char_matrix};
     offsets[0] = offsetof(struct file_swarm, nr_peers);
     offsets[1] = offsetof(struct file_swarm, peers_list);
     offsets[2] = offsetof(struct file_swarm, nr_hashes);
     offsets[3] = offsetof(struct file_swarm, filename);
+    offsets[4] = offsetof(struct file_swarm, hashes_list);
 
-    MPI_Type_create_struct(4, field_sizes, offsets, datatypes, &mpi_file_swarm);
+    MPI_Type_create_struct(5, field_sizes, offsets, datatypes, &mpi_file_swarm);
     MPI_Type_commit(&mpi_file_swarm);
 }
  
