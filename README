@@ -1,5 +1,3 @@
-Ignatescu Darius Bogdan, Grupa 331CB
-
 Semnificatie tipuri de date si variabile
 
 --> struct tracker_file : retine datele unui fisier din perspectiva trackerului: nr de owneri, care sunt, hashurile fisierelor in ordine si numele fisierelor

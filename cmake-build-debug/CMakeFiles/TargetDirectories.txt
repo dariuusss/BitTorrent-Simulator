@@ -1,3 +1,0 @@
-D:/Facultate/Anul 3/Semestrul 1/APD/teme/tema-2/tema-2-apd/cmake-build-debug/CMakeFiles/tema_2.dir
-D:/Facultate/Anul 3/Semestrul 1/APD/teme/tema-2/tema-2-apd/cmake-build-debug/CMakeFiles/edit_cache.dir
-D:/Facultate/Anul 3/Semestrul 1/APD/teme/tema-2/tema-2-apd/cmake-build-debug/CMakeFiles/rebuild_cache.dir
