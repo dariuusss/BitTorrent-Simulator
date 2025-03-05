@@ -1,41 +1,41 @@
-Semnificatie tipuri de date si variabile
+# Meaning of Data Types and Variables
 
---> struct tracker_file : retine datele unui fisier din perspectiva trackerului: nr de owneri, care sunt, hashurile fisierelor in ordine si numele fisierelor
+## Data Structures
 
---> struct client_file: retine un fisier asa cum il are clientul(complet sau partial la un moment dat de timp) : nume fisier, cate segmente are clientul din fisier, cate segmente are fisierul complet si lista de segmente detinute din acel fisier la un moment dat de catre clientul respectiv
+- **struct tracker_file**: Stores file data from the tracker's perspective: number of owners, their identities, file hashes in order, and file names.
 
--> struct file_swarm: este folosit pentru comunicarea intre threadul de download al clientului si tracker. Mesajele pot fi de 4 tipuri: cerere de swarm,actualizare, informare despre descarcarea unui fisier sau informarea despre descarcarea tuturor fisierelor. Intrucat un swarm valid poate avea doar numar pozitiv de owneri(seeds sau peers), atunci cand trimit cererea de la download_thread_func catre tracker,in campul nr_peers pun unul din urmatoarele coduri pentru identificarea tipului de mesaj: CLIENT_DOWNLOADED_ALL_FILES = -1, CLIENT_DOWNLOADED_ONE_FILE -2, SWARM_REQUEST -7000 sau UPDATE_REQUEST = -7567. Atunci cand trackerul primeste bufferul de tip struct file_swarm, va pune datele aferente raspunsului cererii in acesta, va suprascrie codul pe care l-a dat trackerul pentru identificarea mesajului si va trimite in download datele corecte(doar pentru cereri de swarm / actualizare, mesajele care desemneaza informarea trackerului nu necesita raspuns).
+- **struct client_file**: Stores a file as the client has it (either completely or partially at a given time): file name, the number of segments the client has, the total number of segments in the complete file, and the list of segments currently held by the client.
 
--> struct client_request: este folosit pentru cereri de segmente si raspunsurile aferente (aceste schimburi de cereri si raspunsuri au loc
-intre functia de download a unui client si cea de upload a altui client) sau pentru mesajul de la tracker care ii spune threadului de upload sa se opreasca. De vreme ce trackerul nu descarca, deci nu face cereri de segmente, singura situatie cand sursa unui mesaj este trackerul este cea in care trebuie oprit threadul de upload. Daca sursa nu e trackerul, inseamna ca e cerere normala de segment.
+- **struct file_swarm**: Used for communication between the client's download thread and the tracker. Messages can be of four types: swarm request, update, notification about a file download, or notification about all files being downloaded. Since a valid swarm must have a positive number of owners (seeds or peers), when sending the request from `download_thread_func` to the tracker, the `nr_peers` field is assigned one of the following codes to identify the message type:
+  - `CLIENT_DOWNLOADED_ALL_FILES = -1`
+  - `CLIENT_DOWNLOADED_ONE_FILE = -2`
+  - `SWARM_REQUEST = -7000`
+  - `UPDATE_REQUEST = -7567`
 
--> my_files: retine fisierele clientului(pot fi detinute complet sau partial la un moment dat de timp)
+  When the tracker receives a buffer of type `struct file_swarm`, it fills it with the appropriate response data, overwrites the code assigned for message identification, and sends the correct data for download (only for swarm/update requests; messages informing the tracker do not require a response).
 
--> wanted_files: coada care retine numele fisierelor pe care clientul doreste sa le descarce
+- **struct client_request**: Used for segment requests and their corresponding responses (these exchanges occur between a client's download function and another client's upload function) or for a message from the tracker instructing the upload thread to stop. Since the tracker does not download files and thus does not request segments, the only case where the tracker is the source of a message is when the upload thread needs to be stopped. If the source is not the tracker, it is a normal segment request.
 
-Explicatii mod de functionare al functiilor:
+- **my_files**: Stores the client's files (which can be fully or partially held at a given time).
 
---> void read_file(int rank): citeste datele despre fisierele pe care un client le detine complet(este seed), respectiv pe care le doreste. Daca fisierul e detinut complet, datele acestuia sunt atat retinute de client din perspectiva sa, cat si trimise catre tracker. Daca fisierul este dorit, datele acestuia sunt tinute minte doar de client(datele initiale sunt doar numele fisierului si ca al nostru client nu detine momentan niciun segment din acesta). Pe masura ce citeste datele despre fisierele pentru care clientul e seed, acestea sunt trimise la tracker. Dupa ce trimite toate fisierele pe care le detine complet, clientul anunta trackerul ca a terminat de trimis tot ce tine de partea de initializare. 
+- **wanted_files**: A queue storing the names of the files the client wants to download.
 
+## Function Explanations
 
----> void tracker(int numtasks, int rank): activitatea acestuia consta in 2 bucle: prima este pentru partea de initializare, iar a doua pentru partea de comunicare cu clientii dupa ce acestia incep procesul de descarcare(clientii au voie sa inceapa descarcarea DOAR dupa ce au primit aprobare de la tracker). In bucla 1 se primesc date de la clienti din functia read_file() pana cand toti clientii informeaza trackerul ca au trimis toate datele detinute. Cand trackerul a primit numtasks - 1 astfel de informari, trimite tuturor clientilor un ACK de "start download", dupa care opreste bucla 1, responsabila de initializare.
+- **void read_file(int rank)**: Reads data about the files a client fully owns (is a seed) and the files they want. If a file is fully owned, its data is stored by the client and sent to the tracker. If a file is desired, its data is only remembered by the client (initially, just the file name and the fact that the client has no segments of it yet). As it reads data about the files the client is seeding, this information is sent to the tracker. Once all fully owned files have been sent, the client notifies the tracker that the initialization process is complete.
 
-Bucla 2 se ocupa de comunicarea cu clientii dupa initializare. Trackerul poate gestiona comunicarea prin 4 tipuri de mesaje: 
+- **void tracker(int numtasks, int rank)**: The tracker operates in two loops: the first is for initialization, and the second handles communication with clients after they begin downloading (clients are allowed to start downloading **only** after receiving approval from the tracker). In loop 1, data is received from clients via `read_file()` until all clients inform the tracker that they have sent all their data. When the tracker has received `numtasks - 1` such notifications, it sends all clients an ACK for "start download" and then exits the initialization loop.
 
-1) instiintare ca 1 client a descarcat un fisier
-2) instiintare ca 1 client a descarcat toate fisierele dorite
-3) cerere de swarm/actualizare
-4) instiintare ca toti clientii au terminat de descarcat toate fisierele dorite.
+  Loop 2 handles communication with clients after initialization. The tracker can process four types of messages:
+  1. Notification that a client has downloaded a file
+  2. Notification that a client has downloaded all desired files
+  3. Swarm/update request
+  4. Notification that all clients have finished downloading all desired files
 
-Pentru mesajele de tip 1) si 2), trackerul gestioneaza intern mesajele(nu e nevoie sa ofere raspuns clientilor). Pentru tipul 3), trackerul doar comunica datele cerute de client acestuia si il adauga in swarm-ul fisierului. Cand apare mesajul de tip 4), trackerul le spune tuturor clientilor sa inchida threadul de upload, dupa care se inchide si el(termina bucla 2).
+  For messages of type (1) and (2), the tracker processes them internally (no response to clients needed). For type (3), the tracker simply provides the requested data and adds the client to the file's swarm. When a type (4) message is received, the tracker instructs all clients to close their upload threads and then terminates itself (ending loop 2).
 
----> void *download_thread_func(void *arg): aceasta functie se ocupa de descarcarea fisierelor pentru un client. Pentru fiecare fisier dorit, acesta trimite o cerere de swarm, asteapta raspuns si incepe descarcarea. Pe parcursul descarcarii, la fiecare 10 segmente clientul trimite catre tracker o cerere de actualizare, intrucat swarmul ar putea suferi modificari. Dupa aceea, clientul se uita ce segmente ii lipsesc si incepe sa faca cereri pana cand primeste segmentul dorit si repeta acest procedeu. Pentru o descarcare eficienta si evitarea solicitarii aceluiasi alt client pentru segmente tot timpul, pentru un segment generez un index aleator care va desemna destinatia cererii de segment. Daca nu primesc din prima segmentul dorit, depun cereri si astept raspunsuri printr-o abordare circulara a swarmului pana cand primesc segmentul, caz in care ma opresc. Dupa ce clientul termina de descarcat un fisier, acesta construieste fisierul de output si informeaza trackerul despre descarcare.
-De asemenea, clientul trimite o instiintare trackerului si pentru momentul in care a terminat de descarcat toate fisierele dorite.
+- **void *download_thread_func(void *arg)**: This function handles file downloading for a client. For each desired file, it sends a swarm request, waits for a response, and starts downloading. During the process, every 10 segments, the client sends an update request to the tracker since the swarm may change. Then, the client checks which segments it is missing and starts making requests until it receives the desired segment, repeating this process. To ensure efficient downloading and avoid requesting segments from the same client repeatedly, a random index is generated to determine the request destination. If the desired segment is not received on the first attempt, requests are made in a circular approach through the swarm until the segment is received, at which point the process stops. Once a file has been fully downloaded, the client reconstructs the output file and informs the tracker of the download. Additionally, the client notifies the tracker when all desired files have been downloaded.
 
+- **void *upload_thread_func(void *arg)**: This function handles incoming segment requests from clients. It checks its own version of the requested file, verifies if it can provide the requested segment, and sends an appropriate response to the requesting client. Since the tracker cannot make download requests, the upload thread can only receive a message from the tracker when it needs to shut down, as all clients have completed their downloads.
 
----> void *upload_thread_func(void *arg): aceasta functie se ocupa de primirea cererilor de segmente de la clienti. Consulta versiunea proprie a fisierului pentru care se solicita un segment, vede daca are posibilitatea sa ofere segmentul solicitat si in functie de situatie trimite un mesaj corespunzator inapoi clientului care a solicitat. Intrucat trackerul nu poate depune cereri de descarcare, threadul de upload poate primi mesaj de la tracker doar atunci cand este nevoie sa se inchida, intrucat toti clientii au terminat de descarcat fisierele dorite.
-
---->void peer(int numtasks, int rank): aceasta functie apeleaza functia de citire a datelor pentru un client, dupa care asteapta sa primeasca de la tracker ACK-ul pentru a incepe sa descarce(pana nu primeste acest ACK nu se incepe nicio activitate a clientului). Dupa primirea ACK-ului, clientul isi porneste threadurile de upload si download.
-
-
-
+- **void peer(int numtasks, int rank)**: This function calls the data reading function for a client, then waits to receive an ACK from the tracker to start downloading (no client activity begins before this ACK is received). Once the ACK is received, the client starts its upload and download threads.
